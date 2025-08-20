@@ -1,0 +1,112 @@
+# Qwen-MoE Configuration for A6000 46GB VRAM
+# Optimized for sequential domain training and MoE router training
+
+model:
+  name: "Qwen/Qwen3-4B-Instruct-2507"
+  torch_dtype: "float16"
+  trust_remote_code: true
+
+lora:
+  r: 32
+  alpha: 64
+  target_modules: ["gate_proj", "up_proj", "down_proj"]
+  dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+training:
+  # Batch size optimized for A6000 46GB VRAM
+  per_device_batch_size: 32
+  gradient_accumulation_steps: 1
+  effective_batch_size: 32  # 64 * 1
+  
+  # Learning rate and optimization
+  learning_rate: 5e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  
+  # Training duration
+  num_epochs: 1
+  max_steps: null  # Use epochs instead
+  
+  # Memory optimization
+  fp16: true
+  bf16: false
+  gradient_checkpointing: true
+  max_grad_norm: 1.0
+  
+  # Sequence length
+  max_length: 256
+  
+  # Logging and saving
+  logging_steps: 100
+  save_steps: 1000
+  save_total_limit: 2
+  eval_steps: 1000
+  
+  # Other settings
+  dataloader_num_workers: 4
+  remove_unused_columns: false
+  report_to: []  # Disable wandb/tensorboard
+
+system:
+  output_dir: "./domain_models"
+  seed: 42
+  gpu_memory_gb: 46
+  mixed_precision: "fp16"
+  
+  # Memory management
+  max_memory_mb: 44000  # Leave 2GB for system
+  device_map: "auto"
+  
+  # Cleanup settings
+  cleanup_checkpoints: true
+  keep_last_checkpoints: 2
+
+domains:
+  - medical
+  - law
+  - math
+  - code
+
+# Domain-specific settings
+domain_configs:
+  medical:
+    max_samples: null  
+    eval_samples: 1000
+    
+  law:
+    max_samples: null
+    eval_samples: 1000
+    
+  math:
+    max_samples: null
+    eval_samples: 500
+    
+  code:
+    max_samples: null
+    eval_samples: 1000
+
+# MoE settings for router training
+moe:
+  num_experts: 4
+  router_type: "top1"
+  load_balancing_loss_weight: 0.01
+  expert_capacity: 64
+  
+  # Router training settings
+  num_epochs: 2
+  batch_size: 2  # Smaller batch size for MoE training
+  gradient_accumulation_steps: 16  # Larger accumulation for effective batch size
+  learning_rate: 1e-4  # Lower learning rate for router
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  
+  # MoE training logging
+  logging_steps: 5
+  save_steps: 200
+  save_total_limit: 3
+  evaluation_strategy: "steps"
+  eval_steps: 200

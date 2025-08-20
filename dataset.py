@@ -1,20 +1,172 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset
-from transformers import AutoTokenizer
-import random
-from typing import Dict, List, Tuple, Optional
+#!/usr/bin/env python3
+"""
+Domain-specific dataset loader for Qwen-MoE project
+Supports Medical, Law, Math, and Code domains
+"""
 
+import torch
+from torch.utils.data import Dataset
+import json
+import os
+from typing import Tuple, List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DomainDataset(Dataset):
-    """Base class for domain-specific datasets"""
+    """Domain-specific dataset class for Qwen-MoE"""
     
-    def __init__(self, tokenizer, max_length=1024, split='train'):
+    def __init__(self, tokenizer, domain: str, max_length: int = 512, split: str = 'train', max_samples: int = None):
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.split = split
-        self.data = []
-        self.domain_name = "base"
+        self.domain = domain
+        self.data = self._load_domain_data(domain, split, max_samples)
+    
+    def _load_domain_data(self, domain: str, split: str, max_samples: int) -> List[Dict[str, str]]:
+        """Load domain-specific data from local JSON files"""
+        data_path = f"data/{domain}"
+        
+        if domain == "medical":
+            return self._load_medical_data(data_path, split, max_samples)
+        elif domain == "law":
+            return self._load_law_data(data_path, split, max_samples)
+        elif domain == "math":
+            return self._load_math_data(data_path, split, max_samples)
+        elif domain == "code":
+            return self._load_code_data(data_path, split, max_samples)
+        else:
+            raise ValueError(f"Unknown domain: {domain}")
+    
+    def _load_medical_data(self, data_path: str, split: str, max_samples: int) -> List[Dict[str, str]]:
+        """Load medical data (MedMCQA)"""
+        file_path = os.path.join(data_path, f"medmcqa_{split}.json")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Medical data file not found: {file_path}")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            dataset = json.load(f)
+        
+        data = []
+        for item in dataset:
+            question = item['question']
+            choices = [item['opa'], item['opb'], item['opc'], item['opd']]
+            choices_text = "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(choices)])
+            
+            # English instruction for medical domain
+            instruction = f"Answer the following medical question:\n\n{question}\n\n{choices_text}\n\nAnswer:"
+            response = chr(65 + item['cop'])  # 0,1,2,3 -> A,B,C,D
+            
+            data.append({
+                'instruction': instruction,
+                'response': response
+            })
+            
+            if max_samples and len(data) >= max_samples:
+                break
+        
+        return data
+    
+    def _load_law_data(self, data_path: str, split: str, max_samples: int) -> List[Dict[str, str]]:
+        """Load law data (LegalBench case_hold)"""
+        file_path = os.path.join(data_path, f"case_hold_{split}.json")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Law data file not found: {file_path}")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            dataset = json.load(f)
+        
+        data = []
+        for item in dataset:
+            question = item['formatted_question']
+            correct_answer = item['correct_ending']
+            
+            # English instruction for law domain
+            instruction = f"Analyze the following legal case and select the correct holding:\n\n{question}"
+            response = correct_answer
+            
+            data.append({
+                'instruction': instruction,
+                'response': response
+            })
+            
+            if max_samples and len(data) >= max_samples:
+                break
+        
+        return data
+    
+    def _load_math_data(self, data_path: str, split: str, max_samples: int) -> List[Dict[str, str]]:
+        """Load math data (GSM8K)"""
+        # GSM8K only has train and test, use test for validation
+        if split == 'validation':
+            split = 'test'
+            
+        file_path = os.path.join(data_path, f"gsm8k_{split}.json")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Math data file not found: {file_path}")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            dataset = json.load(f)
+        
+        data = []
+        for item in dataset:
+            question = item['question']
+            answer = item['answer']
+            
+            # English instruction for math domain
+            instruction = f"Solve the following math problem step by step:\n\n{question}"
+            response = answer
+            
+            data.append({
+                'instruction': instruction,
+                'response': response
+            })
+            
+            if max_samples and len(data) >= max_samples:
+                break
+        
+        return data
+    
+    def _load_code_data(self, data_path: str, split: str, max_samples: int) -> List[Dict[str, str]]:
+        """Load code data (CodeXGLUE)"""
+        file_path = os.path.join(data_path, f"codexglue_{split}.json")
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Code data file not found: {file_path}")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            dataset = json.load(f)
+        
+        data = []
+        for item in dataset:
+            # CodeXGLUE structure may vary, handle common fields
+            if 'nl' in item and 'code' in item:
+                instruction = f"Generate Python code for the following requirement:\n\n{item['nl']}"
+                response = item['code']
+            elif 'question' in item and 'answer' in item:
+                instruction = f"Write code to solve the following problem:\n\n{item['question']}"
+                response = item['answer']
+            elif 'formatted_question' in item and 'code' in item:
+                instruction = item['formatted_question']
+                response = item['code']
+            elif 'docstring' in item and 'code' in item:
+                instruction = f"Write Python code for the following docstring:\n\n{item['docstring']}"
+                response = item['code']
+            else:
+                # Skip invalid items
+                continue
+            
+            data.append({
+                'instruction': instruction,
+                'response': response
+            })
+            
+            if max_samples and len(data) >= max_samples:
+                break
+        
+        return data
     
     def __len__(self):
         return len(self.data)
@@ -22,281 +174,118 @@ class DomainDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        # Format as instruction-response
-        instruction_text = f"<instruction>: {item['instruction']}\n<response>: "
-        response_text = item['response']
-        full_text = instruction_text + response_text
+        # Format for Qwen instruction-following format
+        full_text = f"<|im_start|>user\n{item['instruction']}<|im_end|>\n<|im_start|>assistant\n{item['response']}<|im_end|>"
         
-        # Tokenize instruction and full text separately to get boundaries
-        instruction_encoding = self.tokenizer(
-            instruction_text,
-            add_special_tokens=False
-        )
-        
-        full_encoding = self.tokenizer(
+        # Tokenize
+        encoding = self.tokenizer(
             full_text,
             truncation=True,
-            padding='max_length',
-            max_length=self.max_length
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors="pt"
         )
         
-        # Create labels: mask instruction part, keep response part
-        labels = full_encoding['input_ids'].copy()
-        instruction_length = len(instruction_encoding['input_ids'])
+        # Labels for causal LM training - only train on assistant response
+        labels = encoding["input_ids"].clone()
         
-        # Mask instruction part (set to -100 to ignore in loss calculation)
-        labels[:instruction_length] = [-100] * instruction_length
+        # Find the start of assistant response
+        assistant_start = None
+        input_ids = encoding["input_ids"][0]
+        
+        # Find "<|im_start|>assistant\n" token sequence
+        for i in range(len(input_ids) - 2):
+            if (input_ids[i] == self.tokenizer.encode("<|im_start|>")[0] and 
+                input_ids[i+1] == self.tokenizer.encode("assistant")[0] and
+                input_ids[i+2] == self.tokenizer.encode("\n")[0]):
+                assistant_start = i + 3
+                break
+        
+        if assistant_start is not None:
+            # Set labels to -100 for everything before assistant response (context only)
+            labels[0, :assistant_start] = -100
+            
+            # Find the end of assistant response (before <|im_end|>)
+            assistant_end = None
+            for i in range(assistant_start, len(input_ids)):
+                if input_ids[i] == self.tokenizer.encode("<|im_end|>")[0]:
+                    assistant_end = i
+                    break
+            
+            if assistant_end is not None:
+                # Set labels to -100 for everything after assistant response
+                labels[0, assistant_end:] = -100
         
         return {
-            'input_ids': full_encoding['input_ids'],
-            'attention_mask': full_encoding['attention_mask'],
-            'labels': labels
+            "input_ids": encoding["input_ids"].flatten(),
+            "attention_mask": encoding["attention_mask"].flatten(),
+            "labels": labels.flatten(),
         }
 
-
-class MedicalDataset(DomainDataset):
-    """Medical domain dataset using MedMCQA"""
+def create_domain_datasets(domain: str, tokenizer, max_length: int = 512, max_samples: int = None) -> Tuple[DomainDataset, DomainDataset]:
+    """Create training and evaluation datasets for a specific domain"""
     
-    def __init__(self, tokenizer, max_length=1024, split='train'):
-        super().__init__(tokenizer, max_length, split)
-        self.domain_name = "medical"
-        self._load_data()
+    # Training dataset
+    train_dataset = DomainDataset(
+        tokenizer=tokenizer,
+        domain=domain,
+        max_length=max_length,
+        split='train',
+        max_samples=max_samples  # Use provided max_samples
+    )
     
-    def _load_data(self):
+    # Evaluation dataset (try validation first, then test)
+    eval_dataset = None
+    for eval_split in ['validation', 'test']:
         try:
-            dataset = load_dataset("medmcqa", split=self.split)
-            
-            for item in dataset:
-                question = item['question']
-                options = [item['opa'], item['opb'], item['opc'], item['opd']]
-                correct_answer = options[item['cop']]
-                
-                # Format options
-                options_text = '\n'.join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)])
-                instruction = f"Question: {question}\n\nOptions:\n{options_text}\n\nAnswer:"
-                response = f"{chr(65+item['cop'])}. {correct_answer}"
-                
-                self.data.append({
-                    'instruction': instruction,
-                    'response': response
-                })
-                
+            eval_dataset = DomainDataset(
+                tokenizer=tokenizer,
+                domain=domain,
+                max_length=max_length,
+                split=eval_split,
+                max_samples=1000  # Limit evaluation samples
+            )
+            logger.info(f"Using {eval_split} split for {domain} domain evaluation")
+            break
         except Exception as e:
-            print(f"Error loading MedMCQA dataset: {e}")
-            raise RuntimeError(f"Failed to load MedMCQA dataset: {e}. Please ensure the dataset is available.")
-
-
-class LawDataset(DomainDataset):
-    """Law domain dataset using LexGLUE case_hold"""
+            logger.warning(f"Failed to load {eval_split} split for {domain} domain: {e}")
+            continue
     
-    def __init__(self, tokenizer, max_length=1024, split='train'):
-        super().__init__(tokenizer, max_length, split)
-        self.domain_name = "law"
-        self._load_data()
+    if eval_dataset is None:
+        raise ValueError(f"No evaluation split available for {domain} domain")
     
-    def _load_data(self):
-        try:
-            dataset = load_dataset("lex_glue", "case_hold", split=self.split)
-            
-            for item in dataset:
-                context = item['context']
-                endings = item['endings']  # 'holdings' -> 'endings'
-                correct_idx = item['label']
-                
-                instruction = f"Legal case analysis:\n{context}\n\nSelect the appropriate holding:"
-                response = endings[correct_idx]
-                
-                self.data.append({
-                    'instruction': instruction,
-                    'response': response
-                })
-                
-        except Exception as e:
-            print(f"Error loading LexGLUE dataset: {e}")
-            raise RuntimeError(f"Failed to load LexGLUE case_hold dataset: {e}. Please ensure the dataset is available.")
-
-
-class MathDataset(DomainDataset):
-    """Math domain dataset using GSM8K"""
+    print(f"📊 {domain.upper()} Dataset:")
+    print(f"  Train: {len(train_dataset):,} samples")
+    print(f"  Eval: {len(eval_dataset):,} samples")
     
-    def __init__(self, tokenizer, max_length=1024, split='train'):
-        super().__init__(tokenizer, max_length, split)
-        self.domain_name = "math"
-        self._load_data()
-    
-    def _load_data(self):
-        try:
-            dataset = load_dataset("gsm8k", "main", split=self.split)
-            
-            for item in dataset:
-                question = item['question']
-                answer = item['answer']
-                
-                self.data.append({
-                    'instruction': f"Solve this math problem step by step:\n{question}",
-                    'response': answer
-                })
-                
-        except Exception as e:
-            print(f"Error loading GSM8K dataset: {e}")
-            raise RuntimeError(f"Failed to load GSM8K dataset: {e}. Please ensure the dataset is available.")
+    return train_dataset, eval_dataset
 
-
-class CodeDataset(DomainDataset):
-    """Code domain dataset using CodeXGLUE"""
+def get_domain_info(domain: str) -> Dict[str, Any]:
+    """Get information about a specific domain dataset"""
+    summary_path = f"data/{domain}/summary.json"
     
-    def __init__(self, tokenizer, max_length=1024, split='train'):
-        super().__init__(tokenizer, max_length, split)
-        self.domain_name = "code"
-        self._load_data()
-    
-    def _load_data(self):
-        try:
-            dataset = load_dataset("code_x_glue_ct_code_to_text", "python", split=self.split)
-            
-            for item in dataset:
-                code = item['code']
-                docstring = item['docstring']
-                
-                self.data.append({
-                    'instruction': f"Explain what this Python code does:\n```python\n{code}\n```",
-                    'response': docstring
-                })
-                
-        except Exception as e:
-            print(f"Error loading CodeXGLUE dataset: {e}")
-            raise RuntimeError(f"Failed to load CodeXGLUE dataset: {e}. Please ensure the dataset is available.")
-
-
-class MultiDomainDataset(Dataset):
-    """Combined dataset from multiple domains"""
-    
-    def __init__(self, datasets: List[DomainDataset], sampling_strategy='balanced'):
-        self.datasets = datasets
-        self.sampling_strategy = sampling_strategy
-        self.data = []
-        self._combine_datasets()
-    
-    def _combine_datasets(self):
-        if self.sampling_strategy == 'balanced':
-            # Equal samples from each domain
-            min_size = min(len(ds) for ds in self.datasets)
-            for dataset in self.datasets:
-                sampled_indices = random.sample(range(len(dataset)), min_size)
-                for idx in sampled_indices:
-                    self.data.append((dataset, idx))
-        else:
-            # Use all data
-            for dataset in self.datasets:
-                for idx in range(len(dataset)):
-                    self.data.append((dataset, idx))
-        
-        # Shuffle combined data
-        random.shuffle(self.data)
-    
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        dataset, data_idx = self.data[idx]
-        return dataset[data_idx]
-
-
-def create_domain_datasets(tokenizer, max_length=1024, split='train') -> Dict[str, DomainDataset]:
-    """Create all domain datasets"""
-    datasets = {
-        'medical': MedicalDataset(tokenizer, max_length, split),
-        'law': LawDataset(tokenizer, max_length, split),
-        'math': MathDataset(tokenizer, max_length, split),
-        'code': CodeDataset(tokenizer, max_length, split)
-    }
-    return datasets
-
-
-def create_dataloaders(datasets: Dict[str, Dataset], batch_size=2, shuffle=True) -> Dict[str, DataLoader]:
-    """Create DataLoaders for all datasets"""
-    dataloaders = {}
-    for name, dataset in datasets.items():
-        dataloaders[name] = DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=0,  # Set to 0 to avoid multiprocessing issues
-            pin_memory=True
-        )
-    return dataloaders
-
-
-def get_evaluation_datasets(tokenizer, max_length=1024):
-    """Get evaluation datasets for all domains"""
-    eval_datasets = {}
-    
-    try:
-        eval_datasets['medical'] = MedicalDataset(tokenizer, max_length, split='validation')
-    except:
-        eval_datasets['medical'] = MedicalDataset(tokenizer, max_length, split='train')
-    
-    try:
-        eval_datasets['law'] = LawDataset(tokenizer, max_length, split='validation')
-    except:
-        eval_datasets['law'] = LawDataset(tokenizer, max_length, split='train')
-    
-    try:
-        eval_datasets['math'] = MathDataset(tokenizer, max_length, split='test')
-    except:
-        eval_datasets['math'] = MathDataset(tokenizer, max_length, split='train')
-    
-    try:
-        eval_datasets['code'] = CodeDataset(tokenizer, max_length, split='validation')
-    except:
-        eval_datasets['code'] = CodeDataset(tokenizer, max_length, split='train')
-    
-    return eval_datasets
-
-
-def collate_fn(batch):
-    """Custom collate function for batching"""
-    input_ids = torch.stack([item['input_ids'] for item in batch])
-    attention_mask = torch.stack([item['attention_mask'] for item in batch])
-    labels = torch.stack([item['labels'] for item in batch])
-    domains = [item['domain'] for item in batch]
-    
-    return {
-        'input_ids': input_ids,
-        'attention_mask': attention_mask,
-        'labels': labels,
-        'domains': domains
-    }
-
+    if os.path.exists(summary_path):
+        with open(summary_path, 'r') as f:
+            return json.load(f)
+    else:
+        return {"error": f"Summary not found for {domain} domain"}
 
 if __name__ == "__main__":
-    # Test the datasets
+    # Test the dataset loading
     from transformers import AutoTokenizer
     
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
     tokenizer.pad_token = tokenizer.eos_token
     
-    # Create datasets
-    datasets = create_domain_datasets(tokenizer, max_length=512, split='train')
-    
-    # Print dataset sizes
-    for name, dataset in datasets.items():
-        print(f"{name}: {len(dataset)} samples")
-        
-        # Show a sample
-        sample = dataset[0]
-        print(f"Sample from {name}:")
-        print(f"Domain: {sample['domain']}")
-        print(f"Input shape: {sample['input_ids'].shape}")
-        print("=" * 50)
-    
-    # Test multi-domain dataset
-    multi_dataset = MultiDomainDataset(list(datasets.values()))
-    print(f"Multi-domain dataset: {len(multi_dataset)} samples")
-    
-    # Test dataloader
-    dataloader = DataLoader(multi_dataset, batch_size=2, collate_fn=collate_fn)
-    for batch in dataloader:
-        print(f"Batch input_ids shape: {batch['input_ids'].shape}")
-        print(f"Batch domains: {batch['domains']}")
-        break
+    # Test each domain
+    for domain in ["medical", "law", "math", "code"]:
+        try:
+            print(f"\n{'='*50}")
+            print(f"Testing {domain.upper()} domain")
+            print(f"{'='*50}")
+            
+            train_ds, eval_ds = create_domain_datasets(domain, tokenizer, max_length=512)
+            print(f"Sample data: {train_ds[0]}")
+            
+        except Exception as e:
+            print(f"Error loading {domain} domain: {e}")

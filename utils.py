@@ -1,386 +1,488 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Tuple, Optional
-import json
+#!/usr/bin/env python3
+"""
+Utility functions for Qwen-MoE project
+Optimized for A6000 46GB VRAM
+"""
+
+import os
+import yaml
 import logging
-from pathlib import Path
-from sklearn.metrics import accuracy_score
-import evaluate
-from transformers import AutoTokenizer
+import torch
+import gc
+from typing import Dict, Any, Optional, List
+import psutil
+import GPUtil
+import json
 import re
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftModel
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-def setup_logging(log_file: Optional[str] = None):
+def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None):
     """Setup logging configuration"""
-    if log_file:
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-    else:
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()),
+        format=log_format,
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_file) if log_file else logging.NullHandler()
+        ]
+    )
 
-
-def print_gpu_memory_summary(stage: str = "", gpu_id: int = 0):
-    """Print GPU memory usage summary in the requested format"""
-    if torch.cuda.is_available():
-        # Get memory stats in bytes for specific GPU
-        alloc = torch.cuda.memory_allocated(gpu_id) / (1024**3)  # Convert to GiB
-        reserved = torch.cuda.memory_reserved(gpu_id) / (1024**3)
-        max_alloc = torch.cuda.max_memory_allocated(gpu_id) / (1024**3)
-        
-        # Get total GPU memory
-        total = torch.cuda.get_device_properties(gpu_id).total_memory / (1024**3)
-        free = total - reserved
-        
-        stage_prefix = f"[{stage}] " if stage else ""
-        print(f"{stage_prefix}[GPU] mem: alloc={alloc:.2f} GiB, reserved={reserved:.2f} GiB, "
-              f"max_alloc={max_alloc:.2f} GiB, free={free:.2f} GiB/ total={total:.2f} GiB")
-    else:
-        print("[GPU] CUDA not available")
-
-
-def save_config(config: Dict, save_path: str):
-    """Save configuration to JSON file"""
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(save_path, 'w') as f:
-        json.dump(config, f, indent=2)
-    logger.info(f"Configuration saved to {save_path}")
-
-
-def load_config(config_path: str) -> Dict:
-    """Load configuration from JSON file"""
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-    logger.info(f"Configuration loaded from {config_path}")
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load configuration from YAML file"""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
     return config
 
-
-def calculate_model_parameters(model):
-    """Calculate total and trainable parameters"""
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+def print_gpu_memory_summary(stage: str = ""):
+    """Print detailed GPU memory usage summary"""
+    if not torch.cuda.is_available():
+        print(f"[GPU] {stage}: CUDA not available")
+        return
     
-    logger.info(f"Total parameters: {total_params:,}")
-    logger.info(f"Trainable parameters: {trainable_params:,}")
-    logger.info(f"Trainable percentage: {100 * trainable_params / total_params:.2f}%")
-    
-    return total_params, trainable_params
-
-
-def plot_router_usage(router_stats: Dict[str, Dict], save_path: Optional[str] = None):
-    """Plot router LoRA adapter usage statistics"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    axes = axes.flatten()
-    
-    layer_indices = list(router_stats.keys())
-    num_layers_to_plot = min(4, len(layer_indices))
-    
-    for i in range(num_layers_to_plot):
-        layer_key = layer_indices[i]
-        adapter_usage = router_stats[layer_key]['adapter_usage']
+    try:
+        # Initialize CUDA if needed
+        if torch.cuda.device_count() == 0:
+            torch.cuda.init()
         
-        axes[i].bar(range(len(adapter_usage)), adapter_usage)
-        axes[i].set_title(f'Router Usage - {layer_key}')
-        axes[i].set_xlabel('LoRA Adapter Index')
-        axes[i].set_ylabel('Usage Probability')
-        axes[i].set_xticks(range(len(adapter_usage)))
-        axes[i].set_xticklabels(['Medical', 'Law', 'Math', 'Code'][:len(adapter_usage)])
+        # Get GPU info using PyTorch
+        for i in range(torch.cuda.device_count()):
+            total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+            allocated = torch.cuda.memory_allocated(i) / 1024**3
+            reserved = torch.cuda.memory_reserved(i) / 1024**3
+            max_allocated = torch.cuda.max_memory_allocated(i) / 1024**3
+            free = total - reserved
+            
+            print(f"[GPU{i}] {stage}: mem: alloc={allocated:.2f} GiB, "
+                  f"reserved={reserved:.2f} GiB, max_alloc={max_allocated:.2f} GiB, "
+                  f"free={free:.2f} GiB/ total={total:.2f} GiB")
     
-    # Hide unused subplots
-    for i in range(num_layers_to_plot, 4):
-        axes[i].set_visible(False)
-    
-    plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"Router usage plot saved to {save_path}")
-    
-    plt.show()
+    except Exception as e:
+        print(f"[GPU] {stage}: Error getting memory info - {e}")
+        # Fallback to basic info
+        try:
+            for i in range(torch.cuda.device_count()):
+                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                print(f"[GPU{i}] {stage}: Total memory: {total:.2f} GiB")
+        except Exception as e2:
+            print(f"[GPU] {stage}: Fallback also failed - {e2}")
 
+def print_system_memory_summary():
+    """Print system memory usage"""
+    memory = psutil.virtual_memory()
+    print(f"[SYSTEM] Memory: used={memory.used/1024**3:.2f} GiB, "
+          f"available={memory.available/1024**3:.2f} GiB, "
+          f"total={memory.total/1024**3:.2f} GiB")
 
+def clear_gpu_memory():
+    """Clear GPU memory and garbage collect"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    gc.collect()
+
+def get_optimal_batch_size(model_size_gb: float, gpu_memory_gb: float = 46.0) -> Dict[str, int]:
+    """Calculate optimal batch sizes for A6000 46GB VRAM"""
+    # Conservative memory allocation (leave 20% for overhead)
+    available_memory = gpu_memory_gb * 0.8
+    
+    # Base memory per sample (rough estimate)
+    base_memory_per_sample = model_size_gb * 0.1  # Conservative estimate
+    
+    # Calculate batch sizes
+    max_batch_size = int(available_memory / base_memory_per_sample)
+    
+    # Conservative batch sizes for different scenarios
+    return {
+        "per_device_batch_size": min(4, max_batch_size),
+        "gradient_accumulation_steps": max(8, max_batch_size // 4),
+        "eval_batch_size": min(2, max_batch_size // 2)
+    }
+
+def create_optimized_config() -> Dict[str, Any]:
+    """Create optimized configuration for A6000 46GB VRAM"""
+    return {
+        "model": {
+            "name": "Qwen/Qwen3-4B-Instruct-2507",
+            "torch_dtype": "bfloat16"
+        },
+        "lora": {
+            "r": 64,
+            "alpha": 128,
+            "target_modules": ["gate_proj", "up_proj", "down_proj"],
+            "dropout": 0.1,
+            "bias": "none"
+        },
+        "training": {
+            "num_epochs": 3,
+            "per_device_batch_size": 4,
+            "gradient_accumulation_steps": 8,
+            "learning_rate": 2e-4,
+            "weight_decay": 0.01,
+            "warmup_ratio": 0.1,
+            "lr_scheduler_type": "cosine",
+            "fp16": True,
+            "max_grad_norm": 1.0,
+            "max_length": 512,
+            "logging_steps": 10,
+            "save_steps": 500,
+            "save_total_limit": 2
+        },
+        "system": {
+            "output_dir": "./domain_models",
+            "seed": 42,
+            "gradient_checkpointing": True
+        }
+    }
+
+def save_config(config: Dict[str, Any], path: str):
+    """Save configuration to YAML file"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        yaml.dump(config, f, default_flow_style=False, indent=2)
+
+def check_data_availability(domains: list) -> Dict[str, bool]:
+    """Check if data files are available for each domain"""
+    availability = {}
+    
+    for domain in domains:
+        data_path = f"data/{domain}"
+        if domain == "medical":
+            required_files = {
+                "train": f"{data_path}/medmcqa_train.json",
+                "validation": f"{data_path}/medmcqa_validation.json",
+                "test": f"{data_path}/medmcqa_test.json"
+            }
+        elif domain == "law":
+            required_files = {
+                "train": f"{data_path}/case_hold_train.json",
+                "validation": f"{data_path}/case_hold_validation.json",
+                "test": f"{data_path}/case_hold_test.json"
+            }
+        elif domain == "math":
+            required_files = {
+                "train": f"{data_path}/gsm8k_train.json",
+                "test": f"{data_path}/gsm8k_test.json"
+            }
+        elif domain == "code":
+            required_files = {
+                "train": f"{data_path}/codexglue_train.json",
+                "validation": f"{data_path}/codexglue_validation.json",
+                "test": f"{data_path}/codexglue_test.json"
+            }
+        else:
+            required_files = {
+                "train": f"{data_path}/{domain}_train.json",
+                "validation": f"{data_path}/{domain}_validation.json",
+                "test": f"{data_path}/{domain}_test.json"
+            }
+        
+        availability[domain] = all(os.path.exists(f) for f in required_files.values())
+    
+    return availability
+
+def validate_environment():
+    """Validate the training environment"""
+    issues = []
+    
+    # Check CUDA availability
+    if not torch.cuda.is_available():
+        issues.append("CUDA is not available")
+    else:
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 0:
+            issues.append("No GPU devices found")
+        else:
+            print(f"Found {gpu_count} GPU device(s)")
+            for i in range(gpu_count):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                print(f"GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+    
+    # Check required packages
+    required_packages = [
+        "transformers", "peft", "accelerate", "datasets", 
+        "torch", "numpy", "yaml"
+    ]
+    
+    for package in required_packages:
+        try:
+            __import__(package)
+        except ImportError:
+            issues.append(f"Package '{package}' is not installed")
+    
+    # Check data directories
+    if not os.path.exists("data"):
+        issues.append("Data directory not found")
+    
+    if issues:
+        print("❌ Environment validation failed:")
+        for issue in issues:
+            print(f"  - {issue}")
+        return False
+    else:
+        print("✅ Environment validation passed")
+        return True
+
+def create_experiment_dir(experiment_name: str) -> str:
+    """Create experiment directory with timestamp"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    experiment_dir = f"experiments/{experiment_name}_{timestamp}"
+    os.makedirs(experiment_dir, exist_ok=True)
+    return experiment_dir
+
+def log_experiment_config(config: Dict[str, Any], experiment_dir: str):
+    """Log experiment configuration"""
+    config_path = os.path.join(experiment_dir, "config.yaml")
+    save_config(config, config_path)
+    print(f"📁 Experiment config saved to: {config_path}")
+
+def cleanup_old_checkpoints(output_dir: str, keep_last: int = 2):
+    """Clean up old checkpoints to save disk space"""
+    if not os.path.exists(output_dir):
+        return
+    
+    checkpoints = []
+    for item in os.listdir(output_dir):
+        if item.startswith("checkpoint-"):
+            checkpoints.append(item)
+    
+    if len(checkpoints) > keep_last:
+        checkpoints.sort(key=lambda x: int(x.split("-")[1]))
+        for checkpoint in checkpoints[:-keep_last]:
+            checkpoint_path = os.path.join(output_dir, checkpoint)
+            import shutil
+            shutil.rmtree(checkpoint_path)
+            print(f"🗑️ Removed old checkpoint: {checkpoint}")
+
+if __name__ == "__main__":
+    # Test utility functions
+    setup_logging()
+    print("🧪 Testing utility functions...")
+    
+    # Test environment validation
+    validate_environment()
+    
+    # Test config creation
+    config = create_optimized_config()
+    print("✅ Config created successfully")
+    
+    # Test GPU memory summary
+    print_gpu_memory_summary("Test")
+    
+    # Test data availability
+    availability = check_data_availability(["medical", "law", "math", "code"])
+    print(f"📊 Data availability: {availability}")
+
+# Medical domain evaluation functions
 def evaluate_medical_accuracy(predictions: List[str], references: List[str]) -> float:
     """Evaluate accuracy for medical domain (MedMCQA)"""
     correct = 0
     total = len(predictions)
     
     for pred, ref in zip(predictions, references):
-        # Extract answer choice (A, B, C, D) from prediction
-        pred_choice = extract_choice(pred)
-        ref_choice = extract_choice(ref)
+        # Clean predictions and references
+        pred_clean = clean_medical_prediction(pred)
+        ref_clean = ref.strip().upper()
         
-        if pred_choice and ref_choice and pred_choice == ref_choice:
+        if pred_clean == ref_clean:
             correct += 1
     
-    accuracy = correct / total if total > 0 else 0.0
-    logger.info(f"Medical accuracy: {accuracy:.4f} ({correct}/{total})")
-    return accuracy
+    return correct / total if total > 0 else 0.0
 
-
-def evaluate_law_accuracy(predictions: List[str], references: List[str]) -> float:
-    """Evaluate accuracy for law domain (case_hold)"""
-    # For case_hold, we compare the generated text with reference
-    correct = 0
-    total = len(predictions)
+def clean_medical_prediction(prediction: str) -> str:
+    """Clean medical prediction to extract answer choice"""
+    # Remove common prefixes and suffixes
+    pred = prediction.strip()
     
-    for pred, ref in zip(predictions, references):
-        # Simple string similarity check
-        if pred.strip().lower() in ref.strip().lower() or ref.strip().lower() in pred.strip().lower():
-            correct += 1
+    # Extract answer choice (A, B, C, D)
+    # Look for patterns like "Answer: A", "The answer is B", etc.
+    patterns = [
+        r'answer[:\s]*([ABCD])',
+        r'([ABCD])[\.\)]',
+        r'option[:\s]*([ABCD])',
+        r'choice[:\s]*([ABCD])',
+        r'([ABCD])\s*$'
+    ]
     
-    accuracy = correct / total if total > 0 else 0.0
-    logger.info(f"Law accuracy: {accuracy:.4f} ({correct}/{total})")
-    return accuracy
-
-
-def evaluate_math_exact_match(predictions: List[str], references: List[str]) -> float:
-    """Evaluate exact match for math domain (GSM8K)"""
-    correct = 0
-    total = len(predictions)
+    for pattern in patterns:
+        match = re.search(pattern, pred, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
     
-    for pred, ref in zip(predictions, references):
-        # Extract numerical answer from both prediction and reference
-        pred_answer = extract_numerical_answer(pred)
-        ref_answer = extract_numerical_answer(ref)
-        
-        if pred_answer is not None and ref_answer is not None:
-            if abs(pred_answer - ref_answer) < 1e-6:  # Handle floating point precision
-                correct += 1
+    # If no pattern found, try to extract single letter
+    letters = re.findall(r'\b[ABCD]\b', pred.upper())
+    if letters:
+        return letters[0]
     
-    exact_match = correct / total if total > 0 else 0.0
-    logger.info(f"Math exact match (GSM8K): {exact_match:.4f} ({correct}/{total})")
-    return exact_match
+    return pred.upper()
 
-
-def evaluate_code_bleu(predictions: List[str], references: List[str]) -> float:
-    """Evaluate BLEU score for code domain"""
-    try:
-        bleu = evaluate.load("bleu")
-        
-        # Prepare references in the format expected by evaluate
-        references_formatted = [[ref] for ref in references]
-        
-        results = bleu.compute(
-            predictions=predictions,
-            references=references_formatted
-        )
-        
-        bleu_score = results['bleu']
-        logger.info(f"Code BLEU score: {bleu_score:.4f}")
-        return bleu_score
-        
-    except Exception as e:
-        logger.warning(f"Failed to compute BLEU score: {e}")
-        return 0.0
-
-
-def extract_choice(text: str) -> Optional[str]:
-    """Extract choice (A, B, C, D) from text"""
-    # Look for pattern like "A." or "A:" or just "A"
-    pattern = r'\b([A-D])\b'
-    match = re.search(pattern, text.upper())
-    return match.group(1) if match else None
-
-
-def extract_numerical_answer(text: str) -> Optional[float]:
-    """Extract numerical answer from text"""
-    # Look for numbers in the text (including decimals)
-    pattern = r'-?\d+\.?\d*'
-    matches = re.findall(pattern, text)
+def load_model_for_evaluation(model_path: str, adapter_path: Optional[str] = None, device: str = "cuda:0"):
+    """Load model for evaluation"""
+    logger = logging.getLogger(__name__)
     
-    if matches:
-        try:
-            # Return the last number found (often the final answer)
-            return float(matches[-1])
-        except ValueError:
-            return None
-    return None
-
-
-def format_training_stats(stats: Dict) -> str:
-    """Format training statistics for logging"""
-    formatted = []
-    for key, value in stats.items():
-        if isinstance(value, float):
-            formatted.append(f"{key}: {value:.4f}")
-        else:
-            formatted.append(f"{key}: {value}")
-    return " | ".join(formatted)
-
-
-def save_router_weights(model, save_path: str):
-    """Save only router weights"""
-    router_state_dict = {}
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     
-    for name, param in model.named_parameters():
-        if 'router' in name:
-            router_state_dict[name] = param.cpu()
-    
-    torch.save(router_state_dict, save_path)
-    logger.info(f"Router weights saved to {save_path}")
-
-
-def load_router_weights(model, weights_path: str):
-    """Load router weights"""
-    router_state_dict = torch.load(weights_path, map_location='cpu')
-    
-    # Load only router parameters
-    for name, param in model.named_parameters():
-        if name in router_state_dict:
-            param.data.copy_(router_state_dict[name])
-    
-    logger.info(f"Router weights loaded from {weights_path}")
-
-
-def get_lr_schedule_with_warmup(optimizer, num_warmup_steps: int, num_training_steps: int):
-    """Get learning rate scheduler with warmup"""
-    from transformers import get_cosine_schedule_with_warmup
-    
-    return get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_training_steps
+    # Load base model
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        device_map=device,
+        trust_remote_code=True
     )
+    
+    # Load adapter if provided
+    if adapter_path and os.path.exists(adapter_path):
+        logger.info(f"Loading adapter from: {adapter_path}")
+        model = PeftModel.from_pretrained(model, adapter_path)
+    
+    model.eval()
+    return model, tokenizer
 
-
-def compute_loss_with_aux(lm_loss: torch.Tensor, aux_loss: torch.Tensor, aux_weight: float = 0.01) -> torch.Tensor:
-    """Compute total loss with auxiliary loss"""
-    total_loss = lm_loss + aux_weight * aux_loss
-    return total_loss
-
-
-def prepare_inputs_for_generation(tokenizer, text: str, max_length: int = 1024) -> Dict[str, torch.Tensor]:
-    """Prepare inputs for text generation"""
-    encoding = tokenizer(
-        text,
-        return_tensors='pt',
-        max_length=max_length,
-        truncation=True,
-        padding=True
-    )
-    return encoding
-
-
-def generate_text(model, tokenizer, prompt: str, max_new_tokens: int = 100, temperature: float = 0.7) -> str:
-    """Generate text using the model"""
-    inputs = prepare_inputs_for_generation(tokenizer, prompt)
+def evaluate_medical_model(model, tokenizer, test_dataset, max_samples: int = 1000, device: str = "cuda:0"):
+    """Evaluate medical model on test dataset"""
+    logger = logging.getLogger(__name__)
+    
+    model.eval()
+    predictions = []
+    references = []
+    
+    # Limit samples for evaluation
+    eval_samples = min(len(test_dataset), max_samples)
+    logger.info(f"Evaluating on {eval_samples} samples")
     
     with torch.no_grad():
-        # Prefer model.generate if available; fallback to base_model.generate for wrappers
-        if hasattr(model, 'generate'):
-            gen_target = model
-        else:
-            gen_target = getattr(model, 'base_model', model)
-        # Resolve device from target with parameters
-        try:
-            device = next(gen_target.parameters()).device
-        except StopIteration:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        outputs = gen_target.generate(
-            input_ids=inputs['input_ids'].to(device),
-            attention_mask=inputs['attention_mask'].to(device),
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id
-        )
+        for i in range(eval_samples):
+            if i % 100 == 0:
+                logger.info(f"Evaluating sample {i}/{eval_samples}")
+            
+            # Get sample
+            sample = test_dataset[i]
+            input_ids = sample["input_ids"].unsqueeze(0).to(device)
+            attention_mask = sample["attention_mask"].unsqueeze(0).to(device)
+            
+            # Find the position where assistant response should start
+            assistant_start = None
+            for j in range(len(input_ids[0]) - 2):
+                if (input_ids[0][j] == tokenizer.encode("<|im_start|>")[0] and 
+                    input_ids[0][j+1] == tokenizer.encode("assistant")[0] and
+                    input_ids[0][j+2] == tokenizer.encode("\n")[0]):
+                    assistant_start = j + 3
+                    break
+            
+            if assistant_start is None:
+                continue
+            
+            # Generate response
+            try:
+                outputs = model.generate(
+                    input_ids=input_ids[:, :assistant_start],
+                    attention_mask=attention_mask[:, :assistant_start],
+                    max_new_tokens=50,
+                    do_sample=False,
+                    temperature=0.0,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.encode("<|im_end|>")[0]
+                )
+                
+                # Decode generated text
+                generated_text = tokenizer.decode(outputs[0][assistant_start:], skip_special_tokens=True)
+                predictions.append(generated_text)
+                
+                # Get reference answer
+                ref_text = tokenizer.decode(sample["input_ids"][assistant_start:], skip_special_tokens=True)
+                references.append(ref_text)
+                
+            except Exception as e:
+                logger.warning(f"Error generating for sample {i}: {e}")
+                continue
     
-    # Decode only the new tokens
-    new_tokens = outputs[0][len(inputs['input_ids'][0]):]
-    generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    # Calculate accuracy
+    accuracy = evaluate_medical_accuracy(predictions, references)
     
-    return generated_text
-
-
-def create_domain_evaluation_prompts() -> Dict[str, List[str]]:
-    """Create evaluation prompts for each domain"""
-    prompts = {
-        'medical': [
-            "A patient presents with sudden chest pain. What is the first test that should be performed in the emergency room?\nA. Chest X-ray\nB. Electrocardiogram (ECG)\nC. Blood test\nD. CT scan\nAnswer:",
-            "What is the target HbA1c level for blood glucose management in diabetic patients?\nAnswer:"
-        ],
-        'law': [
-            "What are the legal grounds for canceling a contract after signing?\nAnswer:",
-            "Explain the rights and obligations of tenants in a lease agreement.\nAnswer:"
-        ],
-        'math': [
-            "In a right triangle, if one side is 3 and another side is 4, what is the length of the hypotenuse?\nAnswer:",
-            "What is the area of a circle with radius 5 cm?\nAnswer:"
-        ],
-        'code': [
-            "Explain what this Python code does:\n```python\ndef binary_search(arr, target):\n    left, right = 0, len(arr) - 1\n    while left <= right:\n        mid = (left + right) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n    return -1\n```\nAnswer:",
-            "Write code using list comprehension to generate even numbers from 1 to 10.\nAnswer:"
-        ]
+    return {
+        "accuracy": accuracy,
+        "predictions": predictions,
+        "references": references,
+        "num_samples": len(predictions)
     }
-    return prompts
 
+def save_evaluation_results(results: Dict[str, Any], output_path: str):
+    """Save evaluation results to JSON file"""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    print(f"📁 Evaluation results saved to: {output_path}")
 
-def evaluate_all_domains(model, tokenizer, save_results: bool = True, results_path: str = "evaluation_results.json"):
-    """Evaluate model on all domains"""
-    prompts = create_domain_evaluation_prompts()
-    results = {}
+def evaluate_domain_model(model, tokenizer, test_dataset, domain: str, max_samples: int = 1000, device: str = "cuda:0") -> Dict[str, Any]:
+    """Evaluate model on any domain dataset"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"📊 Evaluating {domain} domain model...")
     
-    print_gpu_memory_summary()
+    model.eval()
+    predictions = []
+    references = []
     
-    for domain, domain_prompts in prompts.items():
-        print(f"\n=== Evaluating {domain.upper()} domain ===")
-        domain_results = []
-        
-        for prompt in domain_prompts:
-            generated = generate_text(model, tokenizer, prompt, max_new_tokens=100)
-            domain_results.append({
-                'prompt': prompt,
-                'generated': generated
-            })
-            print(f"Prompt: {prompt[:100]}...")
-            print(f"Generated: {generated[:200]}...")
-            print("-" * 50)
-        
-        results[domain] = domain_results
+    # Limit samples for evaluation
+    eval_samples = min(max_samples, len(test_dataset))
+    logger.info(f"📊 Evaluating on {eval_samples} samples")
     
-    if save_results:
-        with open(results_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        logger.info(f"Evaluation results saved to {results_path}")
+    with torch.no_grad():
+        for i in range(eval_samples):
+            if i % 100 == 0:
+                logger.info(f"📊 Processing sample {i}/{eval_samples}")
+            
+            sample = test_dataset[i]
+            input_ids = sample["input_ids"].unsqueeze(0).to(device)
+            attention_mask = sample["attention_mask"].unsqueeze(0).to(device)
+            
+            # Generate prediction
+            outputs = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=50,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id
+            )
+            
+            # Decode prediction and reference
+            prediction = tokenizer.decode(outputs[0][input_ids.shape[1]:], skip_special_tokens=True)
+            reference = tokenizer.decode(sample["labels"][sample["labels"] != -100], skip_special_tokens=True)
+            
+            predictions.append(prediction.strip())
+            references.append(reference.strip())
     
+    # Calculate accuracy (simple exact match for now)
+    correct = 0
+    total = len(predictions)
+    
+    for pred, ref in zip(predictions, references):
+        if pred.strip().lower() == ref.strip().lower():
+            correct += 1
+    
+    accuracy = correct / total if total > 0 else 0.0
+    
+    results = {
+        "domain": domain,
+        "accuracy": accuracy,
+        "total_samples": total,
+        "correct_predictions": correct,
+        "predictions": predictions[:10],  # Save first 10 for inspection
+        "references": references[:10]
+    }
+    
+    logger.info(f"📊 {domain.title()} domain accuracy: {accuracy:.4f} ({correct}/{total})")
     return results
-
-
-if __name__ == "__main__":
-    # Test utility functions
-    print("Testing utility functions...")
-    
-    # Test GPU memory
-    print_gpu_memory_summary()
-    
-    # Test choice extraction
-    test_text = "The answer is B. This is the correct choice."
-    choice = extract_choice(test_text)
-    print(f"Extracted choice: {choice}")
-    
-    # Test numerical extraction
-    test_math = "Step 1: 3 + 4 = 7. Step 2: 7 * 2 = 14. The final answer is 14."
-    number = extract_numerical_answer(test_math)
-    print(f"Extracted number: {number}")
-    
-    # Test evaluation prompts
-    prompts = create_domain_evaluation_prompts()
-    for domain, domain_prompts in prompts.items():
-        print(f"{domain}: {len(domain_prompts)} prompts")
-    
-    print("All tests completed!")
