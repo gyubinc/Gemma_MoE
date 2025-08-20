@@ -1,0 +1,17 @@
+# Ignore large data files
+data/*.json
+data/*/*.json
+
+# Ignore model outputs
+domain_models/
+*.pt
+*.bin
+*.safetensors
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore logs
+*.log
+logs/

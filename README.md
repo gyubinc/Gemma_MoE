@@ -49,12 +49,17 @@ gemma-moe/
 pip install -r requirements.txt
 ```
 
-### 2. 전체 파이프라인 실행
+### 2. 데이터셋 다운로드
+```bash
+python download_data.py
+```
+
+### 3. 전체 파이프라인 실행
 ```bash
 ./run_full_moe_pipeline.sh
 ```
 
-### 3. 개별 도메인 훈련
+### 4. 개별 도메인 훈련
 ```bash
 python train_domain_models.py \
     --domain medical \
@@ -66,7 +71,7 @@ python train_domain_models.py \
     --fp16
 ```
 
-### 4. MoE 라우터 훈련
+### 5. MoE 라우터 훈련
 ```bash
 python train_moe_router.py \
     --base_model google/gemma-3-4b-it \
