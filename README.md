@@ -1,20 +1,21 @@
 # Qwen-MoE: Domain-Specific Mixture of Experts
 
-A comprehensive implementation of domain-specific LoRA adapters for Qwen-3-4B-Instruct model with MoE (Mixture of Experts) architecture, optimized for A6000 46GB VRAM.
+A comprehensive OOP-designed implementation of domain-specific LoRA adapters for Qwen-3-4B-Instruct model with MoE (Mixture of Experts) architecture, optimized for A6000 46GB VRAM.
 
 ## 🎯 Project Overview
 
-This project implements a complete MoE (Mixture of Experts) pipeline:
+This project implements a complete MoE (Mixture of Experts) pipeline with object-oriented design:
 
-1. **Domain-Specific Training**: Train LoRA adapters for 4 different domains
-2. **MoE Architecture**: Combine adapters into a single MoE model with router
-3. **Router Training**: Train the router on combined dataset from all domains
+1. **Domain-Specific Training**: Train LoRA adapters for 4 different domains using OOP classes
+2. **Automatic Evaluation**: Each training includes comprehensive model evaluation  
+3. **MoE Architecture**: Combine adapters into a single MoE model with router
+4. **Sequential Pipeline**: Memory-optimized training to prevent GPU memory issues
 
-### Supported Domains:
-- **Medical**: MedMCQA medical question answering
-- **Law**: LegalBench case_hold legal case analysis  
-- **Math**: GSM8K mathematical problem solving
-- **Code**: CodeXGLUE code generation
+### 🏥 Supported Domains:
+- **Medical**: MedMCQA medical question answering (15k samples)
+- **Law**: LegalBench case_hold legal case analysis (45k samples)
+- **Math**: GSM8K mathematical problem solving (7.5k samples)
+- **Code**: CodeXGLUE code generation (252k samples)
 
 ## 🚀 Quick Start
 
@@ -22,262 +23,234 @@ This project implements a complete MoE (Mixture of Experts) pipeline:
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/gyubinc/Gemma_MoE.git
 cd Qwen_MoE
 
-# Create conda environment
-conda create -n qwen_moe python=3.10
-conda activate qwen_moe
+# Activate conda environment
+conda deactivate && conda activate gyubin
 
-# Install dependencies
-pip install -r requirements.txt
+# Set GPU
+export CUDA_VISIBLE_DEVICES=3
 ```
 
-### 2. Data Preparation
+### 2. One-Command Training (Recommended)
 
 ```bash
-# Download all datasets
-cd scripts
-python download_data.py
+# Run all domains sequentially (Medical → Law → Math → Code)
+bash run_all_domains.sh
 ```
 
-### 3. Environment Validation
+### 3. Individual Domain Training
 
 ```bash
-# Test environment
-python utils.py
-
-# Test dataset loading
-cd tests
-python test_dataset.py
+# Train specific domain
+python run_domain_training.py --domain medical --gpu_id 3 --experiment_name medical_training
+python run_domain_training.py --domain law --gpu_id 3 --experiment_name law_training
+python run_domain_training.py --domain math --gpu_id 3 --experiment_name math_training
+python run_domain_training.py --domain code --gpu_id 3 --experiment_name code_training
 ```
 
-### 4. Complete Pipeline Training
+### 4. tmux Background Training
 
 ```bash
-# Run complete pipeline (domain training + MoE router training)
-cd scripts
-bash run_pipeline.sh
-```
+# Run in tmux for long-running training
+tmux new-session -d -s all_domains_training
+tmux send-keys -t all_domains_training "cd /path/to/Qwen_MoE && conda activate gyubin && bash run_all_domains.sh" Enter
 
-### 5. Individual Training
-
-```bash
-# Train individual domains
-python train_domain_models.py --domain medical --gpu_id 0
-python train_domain_models.py --domain law --gpu_id 0
-python train_domain_models.py --domain math --gpu_id 0
-python train_domain_models.py --domain code --gpu_id 0
-
-# Train MoE router (after domain training)
-python train_moe_router.py --gpu_id 0
+# Monitor progress
+tmux attach-session -t all_domains_training
 ```
 
 ## 📁 Project Structure
 
 ```
 Qwen_MoE/
-├── dataset.py              # Dataset loading and processing
-├── train_domain_models.py  # Domain-specific LoRA training
-├── train_moe_router.py     # MoE router training
-├── moe_architecture.py     # MoE model implementation
-├── utils.py               # Utility functions
-├── config.yaml            # Configuration file
-├── requirements.txt       # Dependencies
-├── README.md             # Project documentation
-├── scripts/              # Utility scripts
-│   ├── run_pipeline.sh   # Complete training pipeline
-│   └── download_data.py  # Dataset download script
-├── tests/                # Test files
-│   └── test_dataset.py   # Dataset loading tests
-├── docs/                 # Documentation
-│   └── SETUP.md         # Setup guide
-├── data/                 # Downloaded datasets
-│   ├── medical/         # MedMCQA data
-│   ├── law/             # LegalBench data
-│   ├── math/            # GSM8K data
-│   └── code/            # CodeXGLUE data
-├── domain_models/        # Trained domain adapters
-└── experiments/          # Training logs and results
+├── 📋 Main Scripts
+│   ├── run_all_domains.sh           # Single script for all domain training
+│   ├── run_domain_training.py       # Unified training pipeline
+│   ├── domain_trainer.py            # OOP training class
+│   └── domain_evaluator.py          # OOP evaluation class
+│
+├── ⚙️ Core Components  
+│   ├── config.yaml                  # Centralized configuration
+│   ├── dataset.py                   # Domain data loaders with teacher forcing
+│   ├── utils.py                     # Utilities (GPU memory, evaluation, etc.)
+│   ├── moe_architecture.py          # MoE model implementation
+│   └── train_moe_router.py          # Router training
+│
+├── 📊 Data & Results
+│   ├── data/                        # Domain datasets
+│   │   ├── medical/                 # MedMCQA data
+│   │   ├── law/                     # LegalBench data  
+│   │   ├── math/                    # GSM8K data
+│   │   └── code/                    # CodeXGLUE data
+│   ├── domain_models/               # Trained LoRA adapters
+│   └── experiments/                 # Training logs and evaluation results
+│
+└── 🛠️ Scripts & Tools
+    └── scripts/
+        ├── train_medical.sh         # Individual domain scripts
+        ├── train_law.sh
+        ├── train_math.sh
+        ├── train_code.sh
+        └── check_training_status.sh # Training status checker
 ```
 
-## ⚙️ Configuration
+## 🔧 Configuration
 
-The `config.yaml` file contains all training parameters optimized for A6000 46GB VRAM:
+All training parameters are managed in `config.yaml`:
 
 ```yaml
-# Domain training settings
+# Model configuration
+model:
+  name: "Qwen/Qwen3-4B-Instruct-2507"
+  torch_dtype: "float16"
+
+# LoRA configuration  
+lora:
+  r: 8                               # Low rank for fast training
+  alpha: 16
+  target_modules: ["gate_proj", "up_proj", "down_proj"]
+
+# Training configuration
 training:
-  per_device_batch_size: 4
-  gradient_accumulation_steps: 8
-  learning_rate: 2e-4
-  num_epochs: 3
+  per_device_batch_size: 32          # Optimized for A6000
+  gradient_accumulation_steps: 1
+  learning_rate: 5e-4
+  num_epochs: 1
+  max_length: 256                    # Optimized sequence length
 
-# MoE settings
-moe:
-  num_experts: 4
-  router_type: "top2"
-  batch_size: 2
-  gradient_accumulation_steps: 16
-  learning_rate: 1e-4
-  num_epochs: 2
+# Domain-specific settings
+domain_configs:
+  medical:
+    max_samples: 15000               # Limited for faster training
+    eval_samples: 1000
+  law:
+    max_samples: null                # Use full dataset
+    eval_samples: 1000
 ```
 
-## 🏗️ MoE Architecture
+## 🎯 OOP Design
 
-### 1. **Domain-Specific Experts**
-- Each domain (medical, law, math, code) has its own LoRA adapter
-- Adapters are frozen during router training
-- Expert capacity limits tokens per expert
+### DomainTrainer Class
+```python
+from domain_trainer import DomainTrainer
 
-### 2. **Router Network**
-- Neural network that selects appropriate experts
-- Top-2 routing: selects 2 experts per token
-- Load balancing loss encourages uniform expert usage
+trainer = DomainTrainer(config, domain="medical", experiment_dir="experiments/")
+adapter_path = trainer.train()
+```
 
-### 3. **MoE Forward Pass**
-1. Get base model hidden states
-2. Router selects experts for each token
-3. Apply selected experts to tokens
-4. Combine expert outputs
-5. Final forward pass with combined states
+### DomainEvaluator Class  
+```python
+from domain_evaluator import DomainEvaluator
 
-## 🎯 Supported Domains
+evaluator = DomainEvaluator(config, domain="medical", experiment_dir="experiments/")
+results = evaluator.evaluate(adapter_path)
+```
 
-### Medical Domain (MedMCQA)
-- **Dataset**: MedMCQA medical question answering
-- **Format**: Multiple choice questions with explanations
-- **Size**: ~182K training samples
-- **Task**: Medical knowledge assessment
+### Unified Pipeline
+```python
+from run_domain_training import DomainPipeline
 
-### Law Domain (LegalBench)
-- **Dataset**: LegalBench case_hold legal case analysis
-- **Format**: Legal case scenarios with multiple holdings
-- **Size**: ~45K training samples  
-- **Task**: Legal reasoning and case analysis
+pipeline = DomainPipeline("config.yaml", "medical", "medical_exp", gpu_id=3)
+results = pipeline.run_full_pipeline()
+```
 
-### Math Domain (GSM8K)
-- **Dataset**: GSM8K mathematical problem solving
-- **Format**: Word problems with step-by-step solutions
-- **Size**: ~7.5K training samples
-- **Task**: Mathematical reasoning and problem solving
+## 📊 Training Pipeline
 
-### Code Domain (CodeXGLUE)
-- **Dataset**: CodeXGLUE text-to-code generation
-- **Format**: Natural language to Python code
-- **Size**: ~252K training samples
-- **Task**: Code generation from natural language
+### Automatic Train → Evaluate Flow
 
-## 🔧 Memory Optimization
+1. **Setup**: Load model, tokenizer, LoRA configuration
+2. **Training**: Train domain-specific LoRA adapter with teacher forcing
+3. **Saving**: Save trained adapter to `domain_models/{domain}/final_adapter/`
+4. **Evaluation**: Automatic evaluation on test dataset
+5. **Results**: Save evaluation results to `experiments/{experiment_name}/`
 
-The project is specifically optimized for A6000 46GB VRAM:
+### Memory Management
 
+- **Sequential Training**: One domain at a time to prevent memory issues
+- **GPU Memory Monitoring**: Automatic memory tracking and cleanup
 - **Gradient Checkpointing**: Enabled for memory efficiency
-- **Mixed Precision**: FP16 training for reduced memory usage
-- **Batch Size**: Optimized batch sizes for domain and MoE training
-- **Memory Management**: Automatic GPU memory cleanup between stages
-- **Expert Capacity**: Limits tokens per expert to prevent OOM
+- **Mixed Precision**: FP16 training for optimal memory usage
 
-## 📊 Training Process
+## 📈 Monitoring & Results
 
-### Stage 1: Domain-Specific Training
-1. **Environment Validation**: Check GPU, packages, and data availability
-2. **Sequential Training**: Train domains one by one to avoid memory conflicts
-3. **Memory Cleanup**: Clear GPU memory between domain training
-4. **Checkpoint Management**: Save only the best and latest checkpoints
-
-### Stage 2: MoE Router Training
-1. **Adapter Loading**: Load all trained domain adapters
-2. **Dataset Combination**: Combine datasets from all domains
-3. **Router Training**: Train router network on combined dataset
-4. **Load Balancing**: Optimize expert utilization
-5. **Final Model**: Save complete MoE model
-
-## 🚨 Error Handling
-
-The project includes comprehensive error handling:
-
-- **Environment Validation**: Check all dependencies and hardware
-- **Data Availability**: Verify dataset files exist before training
-- **Memory Management**: Handle OOM errors gracefully
-- **Training Recovery**: Resume from checkpoints if training fails
-- **Logging**: Detailed error logs for debugging
-
-## 📈 Monitoring
-
-Training progress can be monitored through:
-
-- **Console Output**: Real-time training metrics
-- **Log Files**: Detailed logs in `experiments/` directory
-- **GPU Memory**: Memory usage tracking at each stage
-- **Expert Utilization**: Router statistics and expert usage
-- **Checkpoints**: Automatic model saving and evaluation
-
-## 🎯 Usage Examples
-
-### Complete Pipeline
+### Check Training Status
 ```bash
-# Run entire pipeline
-cd scripts
-bash run_pipeline.sh
+# Check current training progress
+bash scripts/check_training_status.sh
+
+# View tmux session
+tmux list-sessions
+tmux attach-session -t all_domains_training
 ```
 
-### Individual Components
+### Results Structure
+```
+experiments/medical_training_YYYYMMDD_HHMMSS/
+├── config.yaml                     # Training configuration
+├── medical_pipeline.log            # Training logs
+└── medical_evaluation_results.json # Evaluation results
+
+domain_models/medical/final_adapter/
+├── adapter_config.json             # LoRA configuration
+├── adapter_model.safetensors        # Trained weights
+└── tokenizer files...               # Tokenizer files
+```
+
+### Evaluation Metrics
+
+Each domain evaluation includes:
+- **Accuracy**: Overall prediction accuracy
+- **Sample Predictions**: First 10 predictions for inspection
+- **Detailed Results**: Per-sample comparison with ground truth
+
+## 🔄 MoE Router Training
+
+After all domains are trained:
+
 ```bash
-# Test MoE architecture
-python moe_architecture.py
-
-# Train specific domain
-python train_domain_models.py --domain medical --gpu_id 0
-
 # Train MoE router
-python train_moe_router.py --gpu_id 0
+python train_moe_router.py --gpu_id 3 --experiment_name moe_router_training
 ```
 
-### Environment Testing
-```bash
-# Test utility functions
-python utils.py
+## ⚡ Performance Optimizations
 
-# Test dataset loading
-cd tests
-python test_dataset.py
-```
+- **Optimized Batch Size**: 32 for A6000 46GB VRAM
+- **Low-Rank LoRA**: r=8, alpha=16 for fast training
+- **Short Sequences**: max_length=256 based on data analysis
+- **Single Epoch**: Sufficient for domain adaptation
+- **Teacher Forcing**: Only train on assistant responses
 
-## 🔍 Troubleshooting
+## 🛠️ Troubleshooting
 
 ### Common Issues
 
-1. **CUDA Out of Memory**
-   - Reduce batch size in `config.yaml`
-   - Enable gradient checkpointing
-   - Clear GPU memory between stages
+1. **CUDA Memory Error**: Reduce `per_device_batch_size` in config.yaml
+2. **conda activate Error**: Run `conda init bash && source ~/.bashrc`
+3. **Data Not Found**: Check data files in `data/{domain}/` directories
 
-2. **Dataset Not Found**
-   - Run `python scripts/download_data.py` first
-   - Check data directory structure
-   - Verify file permissions
+### Memory Monitoring
+```bash
+# Check GPU memory
+nvidia-smi
 
-3. **Package Import Errors**
-   - Install requirements: `pip install -r requirements.txt`
-   - Check Python version (3.10+ recommended)
-   - Verify conda environment activation
-
-### Performance Tips
-
-- Use `gradient_checkpointing: true` for memory efficiency
-- Monitor expert utilization during MoE training
-- Use FP16 for faster training on A6000
-- Clear memory between domain and MoE training
+# Monitor in training logs
+grep "GPU" experiments/*/logs
+```
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - See LICENSE file for details.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open Pull Request
 
-## 📞 Support
+---
 
-For questions and support, please open an issue on the repository.
+**🎯 Ready for production: Sequential domain training with automatic evaluation and MoE router integration!**
