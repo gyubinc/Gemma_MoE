@@ -68,29 +68,27 @@ domains:
   - medical
   - law
   - math
-  - code
 
-# Domain-specific settings
+# Domain-specific settings with actual available datasets
 domain_configs:
   medical:
-    max_samples: null  
-    eval_samples: 1000
+    dataset: "medmcqa"      # MedMCQA (182k train, 6k test)
+    max_samples: 100        # Use 100 samples for testing
+    eval_samples: 100       # Use 100 samples for evaluation
     
   law:
-    max_samples: null
-    eval_samples: 1000
+    dataset: "case_hold"    # CaseHOLD (45k train, 1k test)
+    max_samples: 100        # Use 100 samples for testing
+    eval_samples: 100       # Use 100 samples for evaluation
     
   math:
-    max_samples: null
-    eval_samples: 500
-    
-  code:
-    max_samples: null
-    eval_samples: 1000
+    dataset: "gsm8k"        # GSM8K (7.5k train, 1k test)
+    max_samples: 100        # Use 100 samples for testing
+    eval_samples: 100       # Use 100 samples for evaluation
 
-# MoE settings for router training
+# MoE settings for router training (현재 3개 도메인만 사용)
 moe:
-  num_experts: 4
+  num_experts: 3
   router_type: "top1"
   load_balancing_loss_weight: 0.01
   expert_capacity: 64
