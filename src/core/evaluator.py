@@ -13,17 +13,23 @@ from typing import Dict, Any, List, Tuple
 from ..configs.domains import domain_manager
 from .dataset import UnifiedDataset
 from .model import model_manager
+from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
 class UnifiedEvaluator:
     """Unified evaluator supporting all domains"""
     
-    def __init__(self, domain: str = None, device: str = "cuda:0"):
+    def __init__(self, domain: str = None, device: str = None):
         self.domain = domain
-        self.device = device
+        self.device = device or self._get_device_from_config()
         self.model = None
         self.tokenizer = None
+    
+    def _get_device_from_config(self) -> str:
+        """Get device from configuration"""
+        config = get_config()
+        return config.get_cuda_device()
     
     def load_model(self, adapter_path: str = None):
         """Load model for evaluation"""
@@ -39,6 +45,12 @@ class UnifiedEvaluator:
         # Get domain configuration
         domain_config = domain_manager.get_domain(domain)
         
+        # Load original data for reference answers
+        import json
+        data_file = domain_config.get_file_path(split)
+        with open(data_file, 'r', encoding='utf-8') as f:
+            original_data = json.load(f)
+        
         # Load test dataset
         test_dataset = UnifiedDataset(
             tokenizer=self.tokenizer,
@@ -48,7 +60,7 @@ class UnifiedEvaluator:
         )
         
         # Evaluate
-        results = self._evaluate_dataset(test_dataset, domain)
+        results = self._evaluate_dataset(test_dataset, domain, original_data[:max_samples])
         
         # Save results
         output_dir = f"experiments/{domain}_evaluation"
@@ -98,7 +110,7 @@ class UnifiedEvaluator:
         
         return results
     
-    def _evaluate_dataset(self, dataset: UnifiedDataset, domain: str) -> Dict[str, Any]:
+    def _evaluate_dataset(self, dataset: UnifiedDataset, domain: str, original_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Evaluate a dataset"""
         self.model.eval()
         predictions = []
@@ -132,9 +144,32 @@ class UnifiedEvaluator:
                     repetition_penalty=1.0
                 )
                 
-                # Decode prediction and reference
+                # Decode prediction
                 prediction = self.tokenizer.decode(outputs[0][assistant_start:], skip_special_tokens=True)
-                reference = self.tokenizer.decode(sample["labels"][sample["labels"] != -100], skip_special_tokens=True)
+                
+                # Get reference from original data
+                original_item = original_data[i]
+                if domain == "medical":
+                    # Fix correct_option if it's -1
+                    correct_option = original_item.get('correct_option', -1)
+                    if correct_option == -1:
+                        correct_answer = original_item.get('correct_answer', '')
+                        options = original_item.get('options', [])
+                        for j, option in enumerate(options):
+                            if option.strip().lower() == correct_answer.strip().lower():
+                                correct_option = j
+                                break
+                        # If still not found, default to 0
+                        if correct_option == -1:
+                            correct_option = 0
+                    reference = chr(65 + correct_option)  # Convert to A, B, C, D
+                elif domain == "law":
+                    reference = chr(65 + original_item.get('correct_ending_idx', 0))
+                elif domain == "math":
+                    correct_option = original_item.get('correct_option', 0)
+                    reference = chr(65 + correct_option)
+                else:
+                    reference = original_item.get('correct_answer', '')
                 
                 predictions.append(prediction.strip())
                 references.append(reference.strip())

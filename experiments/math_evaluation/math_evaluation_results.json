@@ -1,0 +1,31 @@
+{
+  "domain": "math",
+  "accuracy": 0.19,
+  "total_samples": 100,
+  "correct_predictions": 19,
+  "predictions": [
+    "Answer:",
+    "We are",
+    "We are",
+    "We are",
+    "We are",
+    "We are",
+    "We are",
+    "Total numb",
+    "We are",
+    "We are"
+  ],
+  "references": [
+    "C",
+    "B",
+    "C",
+    "D",
+    "A",
+    "E",
+    "C",
+    "A",
+    "B",
+    "D"
+  ],
+  "evaluation_type": "multiple_choice"
+}

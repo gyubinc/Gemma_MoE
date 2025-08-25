@@ -15,6 +15,13 @@ from .data_utils import (
     get_domain_statistics,
     validate_environment
 )
+from .config import (
+    ConfigManager,
+    config_manager,
+    get_config,
+    setup_cuda_environment,
+    apply_generation_config
+)
 
 __all__ = [
     "print_gpu_memory_summary",
@@ -24,5 +31,10 @@ __all__ = [
     "check_data_availability",
     "analyze_dataset_samples",
     "get_domain_statistics",
-    "validate_environment"
+    "validate_environment",
+    "ConfigManager",
+    "config_manager",
+    "get_config",
+    "setup_cuda_environment",
+    "apply_generation_config"
 ]

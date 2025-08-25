@@ -1,0 +1,33 @@
+{
+  "domain": "medical",
+  "accuracy": 0.5890509203920631,
+  "total_samples": 4183,
+  "correct_predictions": 2464,
+  "predictions": [
+    "A",
+    "A",
+    "C",
+    "C",
+    "A",
+    "A",
+    "A",
+    "D",
+    "A",
+    "B"
+  ],
+  "references": [
+    "A",
+    "A",
+    "C",
+    "C",
+    "A",
+    "A",
+    "A",
+    "B",
+    "B",
+    "B"
+  ],
+  "evaluation_type": "multiple_choice",
+  "model_type": "lora",
+  "model_path": "domain_models/medical/medical/final_adapter"
+}

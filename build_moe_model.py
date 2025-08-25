@@ -17,7 +17,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from src.configs import domain_manager
-from src.utils import validate_environment, print_gpu_memory_summary
+from src.utils import validate_environment, print_gpu_memory_summary, setup_cuda_environment
 
 def setup_logging():
     """Setup logging configuration"""
@@ -33,10 +33,16 @@ def setup_logging():
 class MoEModelBuilder:
     """Build MoE model from multiple domain adapters"""
     
-    def __init__(self, base_model_name: str = "Qwen/Qwen3-4B-Instruct-2507", device: str = "cuda:0"):
+    def __init__(self, base_model_name: str = "Qwen/Qwen3-4B-Instruct-2507", device: str = None):
         self.base_model_name = base_model_name
-        self.device = device
+        self.device = device or self._get_device_from_config()
         self.domains = domain_manager.get_available_domains()
+    
+    def _get_device_from_config(self) -> str:
+        """Get device from configuration"""
+        from src.utils.config import get_config
+        config = get_config()
+        return config.get_cuda_device()
         
     def load_domain_adapters(self, adapters_dir: str) -> Dict[str, str]:
         """Load available domain adapters"""
@@ -183,8 +189,8 @@ def main():
                        help="Output directory for MoE model")
     parser.add_argument("--base-model", default="Qwen/Qwen3-4B-Instruct-2507",
                        help="Base model name")
-    parser.add_argument("--device", default="cuda:0",
-                       help="Device to use")
+    parser.add_argument("--device", default=None,
+                       help="Device to use (default: from config)")
     parser.add_argument("--validate-only", action="store_true",
                        help="Only validate existing MoE model")
     
@@ -198,6 +204,9 @@ def main():
     logger.info(f"Adapters directory: {args.adapters_dir}")
     logger.info(f"Output directory: {args.output_dir}")
     logger.info(f"Base model: {args.base_model}")
+    
+    # Setup CUDA environment from config
+    setup_cuda_environment()
     
     # Validate environment
     if not validate_environment():

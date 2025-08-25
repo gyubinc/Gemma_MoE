@@ -1,110 +1,72 @@
-# Qwen-MoE Configuration for A6000 46GB VRAM
-# Optimized for sequential domain training and MoE router training
+# Qwen-MoE Configuration
+# Centralized configuration for all components
 
+# GPU Configuration
+gpu:
+  cuda_visible_devices: "3"  # GPU device to use
+  device: "cuda:0"  # Device string for PyTorch
+
+# Model Configuration
 model:
-  name: "Qwen/Qwen3-4B-Instruct-2507"
-  torch_dtype: "float16"
+  base_model: "Qwen/Qwen3-4B-Instruct-2507"
+  max_length: 512
   trust_remote_code: true
+  generation:
+    temperature: null
+    top_p: null
+    max_new_tokens: 100
+    do_sample: false
+    pad_token_id: null
+    eos_token_id: null
 
+# LoRA Configuration
 lora:
-  r: 32
-  alpha: 64
-  target_modules: ["gate_proj", "up_proj", "down_proj"]
+  r: 64
+  alpha: 128
   dropout: 0.1
+  target_modules: ["gate_proj", "up_proj", "down_proj"]
   bias: "none"
-  task_type: "CAUSAL_LM"
 
+# Training Configuration
 training:
-  # Batch size optimized for A6000 46GB VRAM
-  per_device_batch_size: 32
-  gradient_accumulation_steps: 1
-  effective_batch_size: 32  # 64 * 1
-  
-  # Learning rate and optimization
-  learning_rate: 5e-4
+  epochs: 3
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 2e-4
   weight_decay: 0.01
   warmup_ratio: 0.1
   lr_scheduler_type: "cosine"
-  
-  # Training duration
-  num_epochs: 1
-  max_steps: null  # Use epochs instead
-  
-  # Memory optimization
   fp16: true
-  bf16: false
-  gradient_checkpointing: true
   max_grad_norm: 1.0
-  
-  # Sequence length
-  max_length: 256
-  
-  # Logging and saving
-  logging_steps: 100
-  save_steps: 1000
+  logging_steps: 10
+  save_steps: 500
   save_total_limit: 2
-  eval_steps: 1000
-  
-  # Other settings
-  dataloader_num_workers: 4
-  remove_unused_columns: false
-  report_to: []  # Disable wandb/tensorboard
-
-system:
-  output_dir: "./domain_models"
-  seed: 42
-  gpu_memory_gb: 46
-  mixed_precision: "fp16"
-  
-  # Memory management
-  max_memory_mb: 44000  # Leave 2GB for system
-  device_map: "auto"
-  
-  # Cleanup settings
-  cleanup_checkpoints: true
-  keep_last_checkpoints: 2
-
-domains:
-  - medical
-  - law
-  - math
-
-# Domain-specific settings with actual available datasets
-domain_configs:
-  medical:
-    dataset: "medmcqa"      # MedMCQA (182k train, 6k test)
-    max_samples: 100        # Use 100 samples for testing
-    eval_samples: 100       # Use 100 samples for evaluation
-    
-  law:
-    dataset: "case_hold"    # CaseHOLD (45k train, 1k test)
-    max_samples: 100        # Use 100 samples for testing
-    eval_samples: 100       # Use 100 samples for evaluation
-    
-  math:
-    dataset: "gsm8k"        # GSM8K (7.5k train, 1k test)
-    max_samples: 100        # Use 100 samples for testing
-    eval_samples: 100       # Use 100 samples for evaluation
-
-# MoE settings for router training (현재 3개 도메인만 사용)
-moe:
-  num_experts: 3
-  router_type: "top1"
-  load_balancing_loss_weight: 0.01
-  expert_capacity: 64
-  
-  # Router training settings
-  num_epochs: 2
-  batch_size: 2  # Smaller batch size for MoE training
-  gradient_accumulation_steps: 16  # Larger accumulation for effective batch size
-  learning_rate: 1e-4  # Lower learning rate for router
-  weight_decay: 0.01
-  warmup_ratio: 0.1
-  lr_scheduler_type: "cosine"
-  
-  # MoE training logging
-  logging_steps: 5
-  save_steps: 200
-  save_total_limit: 3
   evaluation_strategy: "steps"
-  eval_steps: 200
+  eval_steps: 500
+  load_best_model_at_end: true
+
+# Data Configuration
+data:
+  max_samples: null  # null means use all samples
+  eval_max_samples: 1000  # Maximum samples for evaluation
+
+# Output Configuration
+output:
+  domain_models_dir: "domain_models"
+  experiments_dir: "experiments"
+  logs_dir: "logs"
+
+# Domain-specific configurations
+domains:
+  medical:
+    max_length: 512
+    num_choices: 4
+  law:
+    max_length: 512
+    num_choices: 5
+  math:
+    max_length: 1024
+    num_choices: 5
+  code:
+    max_length: 1024
+    num_choices: 1

@@ -1,0 +1,31 @@
+{
+  "domain": "law",
+  "accuracy": 0.769,
+  "total_samples": 1000,
+  "correct_predictions": 769,
+  "predictions": [
+    "D",
+    "A",
+    "E",
+    "C",
+    "A",
+    "A",
+    "B",
+    "C",
+    "B",
+    "A"
+  ],
+  "references": [
+    "D",
+    "A",
+    "E",
+    "D",
+    "B",
+    "A",
+    "B",
+    "C",
+    "B",
+    "A"
+  ],
+  "evaluation_type": "multiple_choice"
+}

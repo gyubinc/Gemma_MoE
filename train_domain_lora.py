@@ -18,7 +18,7 @@ sys.path.insert(0, current_dir)
 
 from src.core import train_domain
 from src.configs import domain_manager
-from src.utils import validate_environment, print_gpu_memory_summary, clear_gpu_memory
+from src.utils import validate_environment, print_gpu_memory_summary, clear_gpu_memory, setup_cuda_environment
 
 def setup_logging():
     """Setup logging configuration"""
@@ -41,8 +41,8 @@ def main():
                        help="Maximum samples to use for training (default: all)")
     parser.add_argument("--output-dir", default="domain_models",
                        help="Output directory for trained models")
-    parser.add_argument("--device", default="cuda:0",
-                       help="Device to use for training")
+    parser.add_argument("--device", default=None,
+                       help="Device to use for training (default: from config)")
     parser.add_argument("--epochs", type=int, default=3,
                        help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=4,
@@ -59,6 +59,9 @@ def main():
     logger.info(f"🚀 Starting LoRA training for {args.domain} domain")
     logger.info(f"Configuration: max_samples={args.max_samples}, epochs={args.epochs}, "
                 f"batch_size={args.batch_size}, lr={args.learning_rate}")
+    
+    # Setup CUDA environment from config
+    setup_cuda_environment()
     
     # Validate environment
     if not validate_environment():

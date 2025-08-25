@@ -95,13 +95,14 @@ def main():
             results["model_type"] = args.model_type
             results["model_path"] = args.model_path
             
-            # Save results
-            with open(args.output, 'w') as f:
+            # Save results with domain-specific filename
+            output_file = f"{args.domain}_baseline.json"
+            with open(output_file, 'w') as f:
                 json.dump(results, f, indent=2)
             
             logger.info(f"✅ Evaluation completed for {args.domain} domain")
             logger.info(f"Accuracy: {results['accuracy']:.4f}")
-            logger.info(f"Results saved to: {args.output}")
+            logger.info(f"Results saved to: {output_file}")
             
         else:
             # Evaluate all domains

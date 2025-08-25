@@ -71,20 +71,7 @@ class UnifiedDataset(Dataset):
     
     def _preprocess_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Preprocess item based on domain-specific requirements"""
-        if self.domain == "medical":
-            # Fix correct_option if it's -1 (invalid)
-            if item.get('correct_option', -1) == -1:
-                # Find correct option by matching correct_answer with options
-                correct_answer = item.get('correct_answer', '')
-                options = item.get('options', [])
-                for i, option in enumerate(options):
-                    if option == correct_answer:
-                        item['correct_option'] = i
-                        break
-                else:
-                    # If no exact match, skip this item
-                    raise ValueError(f"No matching option found for answer: {correct_answer}")
-        
+        # 모든 도메인에서 정답이 있으므로 -1 처리 로직 제거
         return item
     
     def _format_instruction(self, item: Dict[str, Any]) -> str:
@@ -130,7 +117,8 @@ class UnifiedDataset(Dataset):
         elif self.domain == "law":
             return domain_manager.format_response(
                 self.domain,
-                correct_ending_idx=item['correct_ending_idx']
+                correct_ending_idx=item['correct_ending_idx'],
+                endings=item['endings']
             )
         
         elif self.domain == "math":
@@ -165,6 +153,8 @@ class UnifiedDataset(Dataset):
             padding="max_length",
             return_tensors="pt"
         )
+        
+        # Keep tensors on CPU, let trainer handle device placement
         
         # Labels for causal LM training - only train on assistant response
         labels = encoding["input_ids"].clone()
@@ -231,29 +221,22 @@ def create_datasets(domain: str, tokenizer, max_samples: int = None) -> Dict[str
         logger.error(f"Failed to load training dataset for {domain}: {e}")
         raise
     
-    # Evaluation dataset (try validation first, then test)
-    for eval_split in ['validation', 'test']:
-        try:
-            datasets[eval_split] = UnifiedDataset(
-                tokenizer=tokenizer,
-                domain=domain,
-                split=eval_split,
-                max_samples=1000  # Limit evaluation samples
-            )
-            logger.info(f"Using {eval_split} split for {domain} domain evaluation")
-            break
-        except Exception as e:
-            logger.warning(f"Failed to load {eval_split} split for {domain} domain: {e}")
-            continue
-    
-    if 'validation' not in datasets and 'test' not in datasets:
-        raise ValueError(f"No evaluation split available for {domain} domain")
+    # Evaluation dataset (use test split)
+    try:
+        datasets['test'] = UnifiedDataset(
+            tokenizer=tokenizer,
+            domain=domain,
+            split='test',
+            max_samples=1000  # Limit evaluation samples
+        )
+        logger.info(f"Using test split for {domain} domain evaluation")
+    except Exception as e:
+        logger.error(f"Failed to load test split for {domain} domain: {e}")
+        raise
     
     # Print dataset info
     print(f"📊 {domain.upper()} Dataset:")
     print(f"  Train: {len(datasets['train']):,} samples")
-    for split in ['validation', 'test']:
-        if split in datasets:
-            print(f"  {split.capitalize()}: {len(datasets[split]):,} samples")
+    print(f"  Test: {len(datasets['test']):,} samples")
     
     return datasets

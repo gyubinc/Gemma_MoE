@@ -19,16 +19,17 @@ from peft import LoraConfig, get_peft_model, TaskType
 from ..configs.domains import domain_manager
 from .dataset import UnifiedDataset, create_datasets
 from .model import model_manager
+from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
 class UnifiedTrainer:
     """Unified trainer supporting all domains"""
     
-    def __init__(self, domain: str, output_dir: str = "domain_models", device: str = "cuda:0"):
+    def __init__(self, domain: str, output_dir: str = "domain_models", device: str = None):
         self.domain = domain
         self.output_dir = output_dir
-        self.device = device
+        self.device = device or self._get_device_from_config()
         
         # Get domain configuration
         self.domain_config = domain_manager.get_domain(domain)
@@ -44,6 +45,11 @@ class UnifiedTrainer:
         self.eval_dataset = None
         self.trainer = None
     
+    def _get_device_from_config(self) -> str:
+        """Get device from configuration"""
+        config = get_config()
+        return config.get_cuda_device()
+    
     def setup_training(self, max_samples: int = None):
         """Setup training components"""
         logger.info(f"Setting up training for {self.domain} domain")
@@ -54,7 +60,7 @@ class UnifiedTrainer:
         # Load datasets
         datasets = create_datasets(self.domain, self.tokenizer, max_samples)
         self.train_dataset = datasets['train']
-        self.eval_dataset = datasets.get('validation') or datasets.get('test')
+        self.eval_dataset = datasets['test']  # validation → test로 변경
         
         # Setup LoRA
         self._setup_lora()
@@ -66,41 +72,54 @@ class UnifiedTrainer:
     
     def _setup_lora(self):
         """Setup LoRA configuration"""
+        config = get_config()
+        lora_config_dict = config.get_lora_config()
+        
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=64,
-            lora_alpha=128,
-            lora_dropout=0.1,
-            target_modules=["gate_proj", "up_proj", "down_proj"],
-            bias="none"
+            r=lora_config_dict.get('r', 64),
+            lora_alpha=lora_config_dict.get('alpha', 128),
+            lora_dropout=lora_config_dict.get('dropout', 0.1),
+            target_modules=lora_config_dict.get('target_modules', ["gate_proj", "up_proj", "down_proj"]),
+            bias=lora_config_dict.get('bias', "none")
         )
         
         self.model = get_peft_model(self.model, lora_config)
+        self.model.train()  # Set to training mode
+        
+        # Ensure LoRA parameters require gradients
+        for name, param in self.model.named_parameters():
+            if 'lora' in name.lower():
+                param.requires_grad = True
+        
         self.model.print_trainable_parameters()
     
     def _setup_trainer(self):
         """Setup trainer with domain-specific configuration"""
+        config = get_config()
+        training_config = config.get_training_config()
+        
         training_args = TrainingArguments(
             output_dir=self.domain_output_dir,
-            num_train_epochs=3,
-            per_device_train_batch_size=4,
+            num_train_epochs=training_config.get('epochs', 3),
+            per_device_train_batch_size=training_config.get('batch_size', 4),
             per_device_eval_batch_size=2,
-            gradient_accumulation_steps=8,
-            learning_rate=2e-4,
-            weight_decay=0.01,
-            warmup_ratio=0.1,
-            lr_scheduler_type="cosine",
-            fp16=True,
-            max_grad_norm=1.0,
-            logging_steps=10,
-            save_steps=500,
-            save_total_limit=2,
-            evaluation_strategy="steps",
-            eval_steps=500,
-            load_best_model_at_end=True,
+            gradient_accumulation_steps=training_config.get('gradient_accumulation_steps', 16),
+            learning_rate=float(training_config.get('learning_rate', 2e-4)),
+            weight_decay=training_config.get('weight_decay', 0.01),
+            warmup_ratio=training_config.get('warmup_ratio', 0.1),
+            lr_scheduler_type=training_config.get('lr_scheduler_type', "cosine"),
+            fp16=training_config.get('fp16', True),
+            max_grad_norm=training_config.get('max_grad_norm', 1.0),
+            logging_steps=training_config.get('logging_steps', 5),
+            save_steps=training_config.get('save_steps', 500),
+            save_total_limit=training_config.get('save_total_limit', 2),
+            eval_strategy=training_config.get('eval_strategy', "steps"),
+            eval_steps=training_config.get('eval_steps', 500),
+            load_best_model_at_end=training_config.get('load_best_model_at_end', True),
             metric_for_best_model="eval_loss",
             greater_is_better=False,
-            gradient_checkpointing=True,
+            gradient_checkpointing=False,
             remove_unused_columns=False,
             dataloader_pin_memory=False,
             report_to=None,  # Disable wandb/tensorboard
@@ -119,6 +138,8 @@ class UnifiedTrainer:
             data_collator=data_collator,
             tokenizer=self.tokenizer,
         )
+        
+        # Model will be moved to device by trainer automatically
     
     def train(self) -> Dict[str, Any]:
         """Train the model"""

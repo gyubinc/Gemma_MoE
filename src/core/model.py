@@ -10,15 +10,17 @@ import logging
 from typing import Optional, Tuple
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
+from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
 class ModelManager:
     """Centralized model management"""
     
-    def __init__(self, model_name: str = "Qwen/Qwen3-4B-Instruct-2507", device: str = "cuda:0"):
-        self.model_name = model_name
-        self.device = device
+    def __init__(self, model_name: str = None, device: str = None):
+        config = get_config()
+        self.model_name = model_name or config.get('model.base_model', "Qwen/Qwen3-4B-Instruct-2507")
+        self.device = device or config.get_cuda_device()
         self.model = None
         self.tokenizer = None
     
@@ -40,6 +42,9 @@ class ModelManager:
             low_cpu_mem_usage=True
         )
         
+        # Apply generation config from settings
+        self._apply_generation_config()
+        
         self.model.eval()
         logger.info("Base model loaded successfully")
         
@@ -58,15 +63,40 @@ class ModelManager:
         # Load adapter
         self.model = PeftModel.from_pretrained(self.model, adapter_path)
         
-        # Fix generation warning
-        self.model.generation_config.temperature = None
-        self.model.generation_config.top_p = None
-        self.model.generation_config.top_k = None
+        # Apply generation config from settings
+        self._apply_generation_config()
         
         self.model.eval()
         logger.info("Model with adapter loaded successfully")
         
         return self.model, self.tokenizer
+    
+    def _apply_generation_config(self):
+        """Apply generation configuration from settings"""
+        if self.model is None:
+            return
+        
+        config = get_config()
+        generation_config = config.get('model.generation', {})
+        
+        # Apply generation settings
+        if hasattr(self.model, 'generation_config'):
+            if generation_config.get('temperature') is not None:
+                self.model.generation_config.temperature = generation_config['temperature']
+            if generation_config.get('top_p') is not None:
+                self.model.generation_config.top_p = generation_config['top_p']
+            if generation_config.get('top_k') is not None:
+                self.model.generation_config.top_k = generation_config['top_k']
+            if generation_config.get('max_new_tokens') is not None:
+                self.model.generation_config.max_new_tokens = generation_config['max_new_tokens']
+            if generation_config.get('do_sample') is not None:
+                self.model.generation_config.do_sample = generation_config['do_sample']
+            if generation_config.get('pad_token_id') is not None:
+                self.model.generation_config.pad_token_id = generation_config['pad_token_id']
+            if generation_config.get('eos_token_id') is not None:
+                self.model.generation_config.eos_token_id = generation_config['eos_token_id']
+        
+        logger.info("Generation config applied from settings")
     
     def get_model_and_tokenizer(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
         """Get current model and tokenizer"""

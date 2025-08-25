@@ -50,9 +50,9 @@ class DomainManager:
                 name="medical",
                 data_path="data/medical",
                 train_file="medmcqa_train.json",
-                validation_file="medmcqa_validation.json", 
+                validation_file="medmcqa_test.json",  # validation → test로 변경
                 test_file="medmcqa_test.json",
-                instruction_template="Answer the following medical question:\n\n{question}\n\n{choices}\n\nAnswer:",
+                instruction_template="Answer the following medical question. Choose only A, B, C, or D. Respond with just the letter.\n\nQuestion: {question}\n\n{choices}\n\nAnswer:",
                 response_format="A",  # Single letter response
                 evaluation_type="multiple_choice",
                 num_choices=4
@@ -61,9 +61,9 @@ class DomainManager:
                 name="law", 
                 data_path="data/law",
                 train_file="case_hold_train.json",
-                validation_file="case_hold_validation.json",
+                validation_file="case_hold_test.json",  # validation → test로 변경
                 test_file="case_hold_test.json", 
-                instruction_template="Legal case analysis:\n\n{context}\n\nSelect the appropriate holding:\n\n{choices}\n\nAnswer:",
+                instruction_template="Legal case analysis. Choose only A, B, C, D, or E. Respond with just the letter.\n\n{context}\n\nSelect the appropriate holding:\n\n{choices}\n\nAnswer:",
                 response_format="A",  # Single letter response
                 evaluation_type="multiple_choice",
                 num_choices=5
@@ -72,9 +72,9 @@ class DomainManager:
                 name="math",
                 data_path="data/math", 
                 train_file="mathqa_train.json",
-                validation_file="mathqa_validation.json",
+                validation_file="mathqa_test.json",  # validation → test로 변경
                 test_file="mathqa_test.json",
-                instruction_template="Solve this math problem:\n\n{question}\n\n{choices}\n\nAnswer:",
+                instruction_template="Math problem. Answer with ONLY A, B, C, D, or E.\n\nExample:\nQuestion: What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nE. 7\n\nAnswer: B\n\nNow solve:\n\n{question}\n\n{choices}\n\nAnswer:",
                 response_format="A",  # Single letter response
                 evaluation_type="multiple_choice",
                 num_choices=5,
@@ -134,7 +134,7 @@ class DomainManager:
         }
         
         # Check file sizes and sample counts
-        for split in ['train', 'validation', 'test']:
+        for split in ['train', 'test']:
             if domain.file_exists(split):
                 file_path = domain.get_file_path(split)
                 stats[f"{split}_file"] = file_path
@@ -168,6 +168,7 @@ class DomainManager:
         elif domain_name == "law":
             context = kwargs.get('context', '')
             endings = kwargs.get('endings', [])
+            # Law domain: format as A, B, C, D, E choices
             choices = "\n".join([f"{chr(65+i)}. {ending}" for i, ending in enumerate(endings)])
             return domain.instruction_template.format(context=context, choices=choices)
         
@@ -193,8 +194,9 @@ class DomainManager:
             return chr(65 + correct_option)
         
         elif domain_name == "law":
+            # Law domain: return the letter corresponding to correct ending
             correct_idx = kwargs.get('correct_ending_idx', 0)
-            return chr(65 + correct_idx)
+            return chr(65 + correct_idx)  # Convert to A, B, C, D, E
         
         elif domain_name == "math":
             correct_option = kwargs.get('correct_option', 0)
